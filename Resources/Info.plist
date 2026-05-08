@@ -8,6 +8,8 @@
     <string>PingBar</string>
     <key>CFBundleIdentifier</key>
     <string>local.pingbar</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

@@ -17,6 +17,7 @@ package: build
 	mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE)/Contents/Resources"
 	cp "$(EXECUTABLE)" "$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)"
 	cp "Resources/Info.plist" "$(APP_BUNDLE)/Contents/Info.plist"
+	cp "Resources/AppIcon.icns" "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"
 	chmod +x "$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)"
 
 open: package
