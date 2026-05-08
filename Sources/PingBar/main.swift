@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import PingBarCore
+import ServiceManagement
 
 private let defaultHost = "1.1.1.1"
 private let defaultInterval: TimeInterval = 5
@@ -174,11 +175,16 @@ private final class PingMonitor: NSObject {
 }
 
 @MainActor
-private final class PingBarController: NSObject {
+private final class PingBarController: NSObject, NSMenuDelegate {
     private let defaults = UserDefaults.standard
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let monitor: PingMonitor
     private let menu = NSMenu()
+    private let launchAtLoginItem = NSMenuItem(
+        title: "Lancer au demarrage",
+        action: #selector(toggleLaunchAtLogin),
+        keyEquivalent: ""
+    )
     private var intervalItems: [NSMenuItem] = []
 
     override init() {
@@ -213,6 +219,7 @@ private final class PingBarController: NSObject {
 
     private func configureMenu() {
         menu.autoenablesItems = false
+        menu.delegate = self
 
         let targetItem = NSMenuItem(
             title: "Changer la cible...",
@@ -226,6 +233,9 @@ private final class PingBarController: NSObject {
         intervalItem.image = symbol("timer")
         intervalItem.submenu = buildIntervalMenu()
 
+        launchAtLoginItem.target = self
+        launchAtLoginItem.image = symbol("poweron")
+
         let quitItem = NSMenuItem(
             title: "Quitter PingBar",
             action: #selector(quit),
@@ -236,11 +246,18 @@ private final class PingBarController: NSObject {
 
         menu.addItem(targetItem)
         menu.addItem(intervalItem)
+        menu.addItem(launchAtLoginItem)
         menu.addItem(.separator())
         menu.addItem(quitItem)
 
         statusItem.menu = menu
         updateIntervalMenu()
+        updateLaunchAtLoginMenu()
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        updateIntervalMenu()
+        updateLaunchAtLoginMenu()
     }
 
     private func render(_ result: PingResult) {
@@ -326,6 +343,42 @@ private final class PingBarController: NSObject {
         updateIntervalMenu()
     }
 
+    @objc private func toggleLaunchAtLogin() {
+        let service = SMAppService.mainApp
+
+        do {
+            switch service.status {
+            case .enabled:
+                try service.unregister()
+
+            case .notRegistered:
+                try service.register()
+
+            case .requiresApproval:
+                showAlert(
+                    title: "Autorisation requise",
+                    message: "macOS demande une validation dans Reglages Systeme > General > Ouverture."
+                )
+
+            case .notFound:
+                showAlert(
+                    title: "App introuvable",
+                    message: "Lancez PingBar depuis le bundle PingBar.app pour activer le demarrage automatique."
+                )
+
+            @unknown default:
+                showAlert(
+                    title: "Etat inconnu",
+                    message: "macOS a retourne un etat inattendu pour le demarrage automatique."
+                )
+            }
+        } catch {
+            showAlert(title: "Demarrage automatique impossible", message: error.localizedDescription)
+        }
+
+        updateLaunchAtLoginMenu()
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
@@ -364,6 +417,35 @@ private final class PingBarController: NSObject {
         }
     }
 
+    private func updateLaunchAtLoginMenu() {
+        switch SMAppService.mainApp.status {
+        case .enabled:
+            launchAtLoginItem.state = .on
+            launchAtLoginItem.isEnabled = true
+            launchAtLoginItem.title = "Lancer au demarrage"
+
+        case .requiresApproval:
+            launchAtLoginItem.state = .mixed
+            launchAtLoginItem.isEnabled = true
+            launchAtLoginItem.title = "Lancer au demarrage"
+
+        case .notRegistered:
+            launchAtLoginItem.state = .off
+            launchAtLoginItem.isEnabled = true
+            launchAtLoginItem.title = "Lancer au demarrage"
+
+        case .notFound:
+            launchAtLoginItem.state = .off
+            launchAtLoginItem.isEnabled = false
+            launchAtLoginItem.title = "Lancer au demarrage"
+
+        @unknown default:
+            launchAtLoginItem.state = .off
+            launchAtLoginItem.isEnabled = true
+            launchAtLoginItem.title = "Lancer au demarrage"
+        }
+    }
+
     private static func savedInterval(from defaults: UserDefaults) -> TimeInterval {
         let value = defaults.double(forKey: intervalDefaultsKey)
         guard intervalOptions.contains(value) else {
@@ -376,6 +458,16 @@ private final class PingBarController: NSObject {
     private func intervalTitle(_ interval: TimeInterval) -> String {
         let seconds = Int(interval)
         return seconds == 1 ? "1 seconde" : "\(seconds) secondes"
+    }
+
+    private func showAlert(title: String, message: String) {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     private func symbol(_ name: String) -> NSImage? {
