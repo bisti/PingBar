@@ -14,7 +14,6 @@ private enum PingStatus: Sendable {
 
 private struct PingResult: Sendable {
     let host: String
-    let date: Date
     let status: PingStatus
 }
 
@@ -73,7 +72,6 @@ private struct PingCommand: Sendable {
 private struct StatusPresentation {
     let buttonTitle: String
     let summaryTitle: String
-    let detail: String
     let color: NSColor
     let symbolName: String
     let toolTip: String
@@ -122,7 +120,7 @@ private final class PingMonitor: NSObject {
 
         isRunning = true
         let measuredHost = host
-        onUpdate?(PingResult(host: measuredHost, date: Date(), status: .measuring))
+        onUpdate?(PingResult(host: measuredHost, status: .measuring))
 
         Task { [weak self, measuredHost] in
             let status = await Task.detached(priority: .utility) {
@@ -141,7 +139,7 @@ private final class PingMonitor: NSObject {
         isRunning = false
 
         if host == measuredHost {
-            onUpdate?(PingResult(host: measuredHost, date: Date(), status: status))
+            onUpdate?(PingResult(host: measuredHost, status: status))
         } else {
             needsRefresh = true
         }
@@ -174,14 +172,12 @@ private final class StatusDotView: NSView {
 
 @MainActor
 private final class PingSummaryView: NSView {
-    static let size = NSSize(width: 280, height: 132)
+    static let size = NSSize(width: 280, height: 96)
 
     private let dotView = StatusDotView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
     private let appLabel = NSTextField(labelWithString: "PingBar")
     private let latencyLabel = NSTextField(labelWithString: "Ping ...")
-    private let detailLabel = NSTextField(labelWithString: "Mesure en cours")
     private let hostLabel = NSTextField(labelWithString: "Cible: 1.1.1.1")
-    private let updatedLabel = NSTextField(labelWithString: "")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -196,13 +192,11 @@ private final class PingSummaryView: NSView {
         Self.size
     }
 
-    func update(result: PingResult, presentation: StatusPresentation, updatedAt: String) {
+    func update(result: PingResult, presentation: StatusPresentation) {
         dotView.color = presentation.color
         latencyLabel.stringValue = presentation.summaryTitle
         latencyLabel.textColor = presentation.color
-        detailLabel.stringValue = presentation.detail
         hostLabel.stringValue = "Cible: \(result.host)"
-        updatedLabel.stringValue = "Derniere mesure: \(updatedAt)"
     }
 
     private func buildView() {
@@ -213,30 +207,20 @@ private final class PingSummaryView: NSView {
         latencyLabel.lineBreakMode = .byTruncatingTail
         latencyLabel.maximumNumberOfLines = 1
 
-        detailLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        detailLabel.textColor = .labelColor
-        detailLabel.lineBreakMode = .byTruncatingTail
-        detailLabel.maximumNumberOfLines = 1
-
-        hostLabel.font = .systemFont(ofSize: 12)
+        hostLabel.font = .systemFont(ofSize: 13, weight: .medium)
         hostLabel.textColor = .secondaryLabelColor
         hostLabel.lineBreakMode = .byTruncatingTail
         hostLabel.maximumNumberOfLines = 1
-
-        updatedLabel.font = .systemFont(ofSize: 11)
-        updatedLabel.textColor = .secondaryLabelColor
-        updatedLabel.lineBreakMode = .byTruncatingTail
-        updatedLabel.maximumNumberOfLines = 1
 
         let headerStack = NSStackView(views: [dotView, appLabel])
         headerStack.orientation = .horizontal
         headerStack.alignment = .centerY
         headerStack.spacing = 7
 
-        let stack = NSStackView(views: [headerStack, latencyLabel, detailLabel, hostLabel, updatedLabel])
+        let stack = NSStackView(views: [headerStack, latencyLabel, hostLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 4
+        stack.spacing = 5
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(stack)
@@ -262,12 +246,6 @@ private final class PingBarController: NSObject {
     private let summaryView = PingSummaryView(
         frame: NSRect(origin: .zero, size: PingSummaryView.size)
     )
-    private let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .medium
-        return formatter
-    }()
 
     override init() {
         let savedHost = defaults.string(forKey: hostDefaultsKey).flatMap(PingParser.sanitizedHost)
@@ -307,7 +285,7 @@ private final class PingBarController: NSObject {
         let refreshItem = NSMenuItem(
             title: "Rafraichir maintenant",
             action: #selector(refreshNow),
-            keyEquivalent: "r"
+            keyEquivalent: ""
         )
         refreshItem.target = self
         refreshItem.image = symbol("arrow.clockwise")
@@ -315,7 +293,7 @@ private final class PingBarController: NSObject {
         let targetItem = NSMenuItem(
             title: "Changer la cible...",
             action: #selector(changeTarget),
-            keyEquivalent: ","
+            keyEquivalent: ""
         )
         targetItem.target = self
         targetItem.image = symbol("target")
@@ -323,7 +301,7 @@ private final class PingBarController: NSObject {
         let quitItem = NSMenuItem(
             title: "Quitter PingBar",
             action: #selector(quit),
-            keyEquivalent: "q"
+            keyEquivalent: ""
         )
         quitItem.target = self
         quitItem.image = symbol("power")
@@ -340,10 +318,9 @@ private final class PingBarController: NSObject {
 
     private func render(_ result: PingResult) {
         let presentation = presentation(for: result)
-        let updatedAt = timeFormatter.string(from: result.date)
 
         applyStatusButton(presentation)
-        summaryView.update(result: result, presentation: presentation, updatedAt: updatedAt)
+        summaryView.update(result: result, presentation: presentation)
     }
 
     private func applyStatusButton(_ presentation: StatusPresentation) {
@@ -363,7 +340,6 @@ private final class PingBarController: NSObject {
             return StatusPresentation(
                 buttonTitle: "Ping ...",
                 summaryTitle: "Ping ...",
-                detail: "Mesure en cours",
                 color: .systemBlue,
                 symbolName: "dot.radiowaves.left.and.right",
                 toolTip: "Ping vers \(result.host)"
@@ -371,13 +347,12 @@ private final class PingBarController: NSObject {
 
         case .success(let milliseconds):
             let latency = formatLatency(milliseconds)
-            let quality = quality(for: milliseconds)
+            let style = style(for: milliseconds)
             return StatusPresentation(
                 buttonTitle: latency,
                 summaryTitle: latency,
-                detail: "Qualite: \(quality.label)",
-                color: quality.color,
-                symbolName: quality.symbolName,
+                color: style.color,
+                symbolName: style.symbolName,
                 toolTip: "Ping vers \(result.host): \(latency)"
             )
 
@@ -385,7 +360,6 @@ private final class PingBarController: NSObject {
             return StatusPresentation(
                 buttonTitle: "Timeout",
                 summaryTitle: "Timeout",
-                detail: "Pas de reponse",
                 color: .systemRed,
                 symbolName: "exclamationmark.triangle.fill",
                 toolTip: "Ping vers \(result.host): timeout"
@@ -395,7 +369,6 @@ private final class PingBarController: NSObject {
             return StatusPresentation(
                 buttonTitle: "Ping ERR",
                 summaryTitle: "Ping ERR",
-                detail: message,
                 color: .systemRed,
                 symbolName: "xmark.octagon.fill",
                 toolTip: "Ping vers \(result.host): \(message)"
@@ -445,14 +418,14 @@ private final class PingBarController: NSObject {
         return "\(Int(milliseconds.rounded())) ms"
     }
 
-    private func quality(for milliseconds: Double) -> (label: String, color: NSColor, symbolName: String) {
+    private func style(for milliseconds: Double) -> (color: NSColor, symbolName: String) {
         switch milliseconds {
         case ..<60:
-            return ("Bon", .systemGreen, "checkmark.circle.fill")
+            return (.systemGreen, "checkmark.circle.fill")
         case ..<120:
-            return ("Moyen", .systemOrange, "exclamationmark.circle.fill")
+            return (.systemOrange, "exclamationmark.circle.fill")
         default:
-            return ("Eleve", .systemRed, "exclamationmark.triangle.fill")
+            return (.systemRed, "exclamationmark.triangle.fill")
         }
     }
 
