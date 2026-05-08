@@ -174,6 +174,8 @@ private final class StatusDotView: NSView {
 
 @MainActor
 private final class PingSummaryView: NSView {
+    static let size = NSSize(width: 280, height: 132)
+
     private let dotView = StatusDotView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
     private let appLabel = NSTextField(labelWithString: "PingBar")
     private let latencyLabel = NSTextField(labelWithString: "Ping ...")
@@ -188,6 +190,10 @@ private final class PingSummaryView: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        Self.size
     }
 
     func update(result: PingResult, presentation: StatusPresentation, updatedAt: String) {
@@ -218,7 +224,7 @@ private final class PingSummaryView: NSView {
         hostLabel.maximumNumberOfLines = 1
 
         updatedLabel.font = .systemFont(ofSize: 11)
-        updatedLabel.textColor = .tertiaryLabelColor
+        updatedLabel.textColor = .secondaryLabelColor
         updatedLabel.lineBreakMode = .byTruncatingTail
         updatedLabel.maximumNumberOfLines = 1
 
@@ -230,7 +236,7 @@ private final class PingSummaryView: NSView {
         let stack = NSStackView(views: [headerStack, latencyLabel, detailLabel, hostLabel, updatedLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 3
+        stack.spacing = 4
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(stack)
@@ -253,10 +259,9 @@ private final class PingBarController: NSObject {
     private let monitor: PingMonitor
     private let menu = NSMenu()
     private let summaryItem = NSMenuItem()
-    private let summaryView = PingSummaryView(frame: NSRect(x: 0, y: 0, width: 280, height: 108))
-    private let hostItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private let lastItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private let stateItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let summaryView = PingSummaryView(
+        frame: NSRect(origin: .zero, size: PingSummaryView.size)
+    )
     private let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .none
@@ -299,13 +304,6 @@ private final class PingBarController: NSObject {
 
         summaryItem.view = summaryView
 
-        hostItem.isEnabled = false
-        lastItem.isEnabled = false
-        stateItem.isEnabled = false
-        hostItem.image = symbol("globe")
-        lastItem.image = symbol("clock")
-        stateItem.image = symbol("circle.fill")
-
         let refreshItem = NSMenuItem(
             title: "Rafraichir maintenant",
             action: #selector(refreshNow),
@@ -332,10 +330,6 @@ private final class PingBarController: NSObject {
 
         menu.addItem(summaryItem)
         menu.addItem(.separator())
-        menu.addItem(hostItem)
-        menu.addItem(lastItem)
-        menu.addItem(stateItem)
-        menu.addItem(.separator())
         menu.addItem(refreshItem)
         menu.addItem(targetItem)
         menu.addItem(.separator())
@@ -350,11 +344,6 @@ private final class PingBarController: NSObject {
 
         applyStatusButton(presentation)
         summaryView.update(result: result, presentation: presentation, updatedAt: updatedAt)
-
-        hostItem.title = "Cible: \(result.host)"
-        lastItem.title = "Derniere mesure: \(updatedAt)"
-        stateItem.title = presentation.detail
-        stateItem.image = symbol(presentation.symbolName)
     }
 
     private func applyStatusButton(_ presentation: StatusPresentation) {
