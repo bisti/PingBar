@@ -19,6 +19,7 @@ package: build
 	cp "Resources/Info.plist" "$(APP_BUNDLE)/Contents/Info.plist"
 	cp "Resources/AppIcon.icns" "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"
 	chmod +x "$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)"
+	touch "$(APP_BUNDLE)"
 
 open: package
 	open "$(APP_BUNDLE)"
