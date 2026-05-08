@@ -18,7 +18,6 @@ package: build
 	cp "$(EXECUTABLE)" "$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)"
 	cp "Resources/Info.plist" "$(APP_BUNDLE)/Contents/Info.plist"
 	chmod +x "$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)"
-	codesign --force --sign - "$(APP_BUNDLE)"
 
 open: package
 	open "$(APP_BUNDLE)"
