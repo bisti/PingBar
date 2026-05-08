@@ -78,6 +78,114 @@ private struct StatusPresentation {
 }
 
 @MainActor
+private final class TargetPanelController: NSObject, NSTextFieldDelegate {
+    private let panel: NSPanel
+    private let input = NSTextField(string: "")
+    private let errorLabel = NSTextField(labelWithString: "")
+    private var selectedHost: String?
+
+    init(currentHost: String) {
+        panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 172),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+
+        super.init()
+
+        panel.title = "Changer la cible"
+        panel.isReleasedWhenClosed = false
+        panel.center()
+
+        buildContent(currentHost: currentHost)
+    }
+
+    func runModal() -> String? {
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
+        panel.makeFirstResponder(input)
+
+        let response = NSApp.runModal(for: panel)
+        panel.orderOut(nil)
+
+        return response == .OK ? selectedHost : nil
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        errorLabel.stringValue = ""
+    }
+
+    private func buildContent(currentHost: String) {
+        let contentView = NSView()
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        panel.contentView = contentView
+
+        let titleLabel = NSTextField(labelWithString: "Cible du ping")
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+
+        let hintLabel = NSTextField(labelWithString: "Adresse IPv4 ou nom de domaine.")
+        hintLabel.font = .systemFont(ofSize: 12)
+        hintLabel.textColor = .secondaryLabelColor
+
+        input.stringValue = currentHost
+        input.delegate = self
+        input.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
+        input.target = self
+        input.action = #selector(confirm)
+        input.translatesAutoresizingMaskIntoConstraints = false
+
+        errorLabel.font = .systemFont(ofSize: 12)
+        errorLabel.textColor = .systemRed
+
+        let cancelButton = NSButton(title: "Annuler", target: self, action: #selector(cancel))
+        cancelButton.bezelStyle = .rounded
+
+        let confirmButton = NSButton(title: "OK", target: self, action: #selector(confirm))
+        confirmButton.bezelStyle = .rounded
+        confirmButton.keyEquivalent = "\r"
+
+        let buttonStack = NSStackView(views: [cancelButton, confirmButton])
+        buttonStack.orientation = .horizontal
+        buttonStack.alignment = .centerY
+        buttonStack.distribution = .fillEqually
+        buttonStack.spacing = 8
+
+        let stack = NSStackView(views: [titleLabel, hintLabel, input, errorLabel, buttonStack])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        contentView.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18),
+            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -18),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 18),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
+            input.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            buttonStack.widthAnchor.constraint(equalTo: stack.widthAnchor)
+        ])
+    }
+
+    @objc private func confirm() {
+        guard let host = PingParser.sanitizedHost(from: input.stringValue) else {
+            errorLabel.stringValue = "Cible invalide."
+            NSSound.beep()
+            return
+        }
+
+        selectedHost = host
+        NSApp.stopModal(withCode: .OK)
+    }
+
+    @objc private func cancel() {
+        NSApp.stopModal(withCode: .cancel)
+    }
+}
+
+@MainActor
 private final class PingMonitor: NSObject {
     var onUpdate: ((PingResult) -> Void)?
 
@@ -290,24 +398,8 @@ private final class PingBarController: NSObject {
     }
 
     @objc private func changeTarget() {
-        NSApp.activate(ignoringOtherApps: true)
-
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        input.stringValue = monitor.host
-
-        let alert = NSAlert()
-        alert.messageText = "Changer la cible"
-        alert.informativeText = "Entrez une IPv4 ou un nom de domaine."
-        alert.accessoryView = input
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Annuler")
-
-        guard alert.runModal() == .alertFirstButtonReturn else {
-            return
-        }
-
-        guard let host = PingParser.sanitizedHost(from: input.stringValue) else {
-            NSSound.beep()
+        let panel = TargetPanelController(currentHost: monitor.host)
+        guard let host = panel.runModal() else {
             return
         }
 
