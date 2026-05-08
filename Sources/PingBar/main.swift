@@ -3,7 +3,10 @@ import Foundation
 import PingBarCore
 
 private let defaultHost = "1.1.1.1"
+private let defaultInterval: TimeInterval = 5
 private let hostDefaultsKey = "PingBarHost"
+private let intervalDefaultsKey = "PingBarInterval"
+private let intervalOptions: [TimeInterval] = [1, 2, 5, 10, 30, 60]
 
 private enum PingStatus: Sendable {
     case measuring
@@ -79,29 +82,19 @@ private final class PingMonitor: NSObject {
     var onUpdate: ((PingResult) -> Void)?
 
     private(set) var host: String
-    private let interval: TimeInterval
+    private(set) var interval: TimeInterval
     private var timer: Timer?
     private var isRunning = false
     private var needsRefresh = false
     private var hasCompletedMeasurement = false
 
-    init(host: String, interval: TimeInterval = 5) {
+    init(host: String, interval: TimeInterval = defaultInterval) {
         self.host = host
         self.interval = interval
     }
 
     func start() {
-        timer?.invalidate()
-        let timer = Timer(
-            timeInterval: interval,
-            target: self,
-            selector: #selector(timerFired),
-            userInfo: nil,
-            repeats: true
-        )
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
-
+        scheduleTimer()
         refresh()
     }
 
@@ -112,6 +105,29 @@ private final class PingMonitor: NSObject {
 
         self.host = host
         refresh()
+    }
+
+    func updateInterval(_ interval: TimeInterval) {
+        guard self.interval != interval else {
+            return
+        }
+
+        self.interval = interval
+        scheduleTimer()
+        refresh()
+    }
+
+    private func scheduleTimer() {
+        timer?.invalidate()
+        let timer = Timer(
+            timeInterval: interval,
+            target: self,
+            selector: #selector(timerFired),
+            userInfo: nil,
+            repeats: true
+        )
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     func refresh() {
@@ -163,10 +179,12 @@ private final class PingBarController: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let monitor: PingMonitor
     private let menu = NSMenu()
+    private var intervalItems: [NSMenuItem] = []
 
     override init() {
         let savedHost = defaults.string(forKey: hostDefaultsKey).flatMap(PingParser.sanitizedHost)
-        monitor = PingMonitor(host: savedHost ?? defaultHost)
+        let savedInterval = Self.savedInterval(from: defaults)
+        monitor = PingMonitor(host: savedHost ?? defaultHost, interval: savedInterval)
         super.init()
     }
 
@@ -196,14 +214,6 @@ private final class PingBarController: NSObject {
     private func configureMenu() {
         menu.autoenablesItems = false
 
-        let refreshItem = NSMenuItem(
-            title: "Rafraichir maintenant",
-            action: #selector(refreshNow),
-            keyEquivalent: ""
-        )
-        refreshItem.target = self
-        refreshItem.image = symbol("arrow.clockwise")
-
         let targetItem = NSMenuItem(
             title: "Changer la cible...",
             action: #selector(changeTarget),
@@ -211,6 +221,10 @@ private final class PingBarController: NSObject {
         )
         targetItem.target = self
         targetItem.image = symbol("target")
+
+        let intervalItem = NSMenuItem(title: "Intervalle", action: nil, keyEquivalent: "")
+        intervalItem.image = symbol("timer")
+        intervalItem.submenu = buildIntervalMenu()
 
         let quitItem = NSMenuItem(
             title: "Quitter PingBar",
@@ -220,12 +234,13 @@ private final class PingBarController: NSObject {
         quitItem.target = self
         quitItem.image = symbol("power")
 
-        menu.addItem(refreshItem)
         menu.addItem(targetItem)
+        menu.addItem(intervalItem)
         menu.addItem(.separator())
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+        updateIntervalMenu()
     }
 
     private func render(_ result: PingResult) {
@@ -274,10 +289,6 @@ private final class PingBarController: NSObject {
         }
     }
 
-    @objc private func refreshNow() {
-        monitor.refresh()
-    }
-
     @objc private func changeTarget() {
         NSApp.activate(ignoringOtherApps: true)
 
@@ -304,6 +315,17 @@ private final class PingBarController: NSObject {
         monitor.updateHost(host)
     }
 
+    @objc private func changeInterval(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? NSNumber else {
+            return
+        }
+
+        let interval = value.doubleValue
+        defaults.set(interval, forKey: intervalDefaultsKey)
+        monitor.updateInterval(interval)
+        updateIntervalMenu()
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
@@ -314,6 +336,46 @@ private final class PingBarController: NSObject {
         }
 
         return "\(Int(milliseconds.rounded())) ms"
+    }
+
+    private func buildIntervalMenu() -> NSMenu {
+        let menu = NSMenu()
+        intervalItems = intervalOptions.map { interval in
+            let item = NSMenuItem(
+                title: intervalTitle(interval),
+                action: #selector(changeInterval(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = NSNumber(value: interval)
+            menu.addItem(item)
+            return item
+        }
+        return menu
+    }
+
+    private func updateIntervalMenu() {
+        intervalItems.forEach { item in
+            guard let value = item.representedObject as? NSNumber else {
+                return
+            }
+
+            item.state = value.doubleValue == monitor.interval ? .on : .off
+        }
+    }
+
+    private static func savedInterval(from defaults: UserDefaults) -> TimeInterval {
+        let value = defaults.double(forKey: intervalDefaultsKey)
+        guard intervalOptions.contains(value) else {
+            return defaultInterval
+        }
+
+        return value
+    }
+
+    private func intervalTitle(_ interval: TimeInterval) -> String {
+        let seconds = Int(interval)
+        return seconds == 1 ? "1 seconde" : "\(seconds) secondes"
     }
 
     private func symbol(_ name: String) -> NSImage? {
