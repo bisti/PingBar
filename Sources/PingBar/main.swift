@@ -71,9 +71,6 @@ private struct PingCommand: Sendable {
 
 private struct StatusPresentation {
     let buttonTitle: String
-    let summaryTitle: String
-    let color: NSColor
-    let symbolName: String
     let toolTip: String
 }
 
@@ -161,100 +158,11 @@ private final class PingMonitor: NSObject {
 }
 
 @MainActor
-private final class StatusDotView: NSView {
-    var color: NSColor = .systemGray {
-        didSet {
-            needsDisplay = true
-        }
-    }
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: 10, height: 10)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        color.setFill()
-        NSBezierPath(ovalIn: bounds.insetBy(dx: 1, dy: 1)).fill()
-    }
-}
-
-@MainActor
-private final class PingSummaryView: NSView {
-    static let size = NSSize(width: 280, height: 96)
-
-    private let dotView = StatusDotView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
-    private let appLabel = NSTextField(labelWithString: "PingBar")
-    private let latencyLabel = NSTextField(labelWithString: "Ping ...")
-    private let hostLabel = NSTextField(labelWithString: "Cible: 1.1.1.1")
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        buildView()
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override var intrinsicContentSize: NSSize {
-        Self.size
-    }
-
-    func update(result: PingResult, presentation: StatusPresentation) {
-        dotView.color = presentation.color
-        latencyLabel.stringValue = presentation.summaryTitle
-        latencyLabel.textColor = presentation.color
-        hostLabel.stringValue = "Cible: \(result.host)"
-    }
-
-    private func buildView() {
-        appLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        appLabel.textColor = .secondaryLabelColor
-
-        latencyLabel.font = .monospacedDigitSystemFont(ofSize: 25, weight: .bold)
-        latencyLabel.lineBreakMode = .byTruncatingTail
-        latencyLabel.maximumNumberOfLines = 1
-
-        hostLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        hostLabel.textColor = .secondaryLabelColor
-        hostLabel.lineBreakMode = .byTruncatingTail
-        hostLabel.maximumNumberOfLines = 1
-
-        let headerStack = NSStackView(views: [dotView, appLabel])
-        headerStack.orientation = .horizontal
-        headerStack.alignment = .centerY
-        headerStack.spacing = 7
-
-        let stack = NSStackView(views: [headerStack, latencyLabel, hostLabel])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 5
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            dotView.widthAnchor.constraint(equalToConstant: 10),
-            dotView.heightAnchor.constraint(equalToConstant: 10),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 11),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -11)
-        ])
-    }
-}
-
-@MainActor
 private final class PingBarController: NSObject {
     private let defaults = UserDefaults.standard
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let monitor: PingMonitor
     private let menu = NSMenu()
-    private let summaryItem = NSMenuItem()
-    private let summaryView = PingSummaryView(
-        frame: NSRect(origin: .zero, size: PingSummaryView.size)
-    )
 
     override init() {
         let savedHost = defaults.string(forKey: hostDefaultsKey).flatMap(PingParser.sanitizedHost)
@@ -280,17 +188,13 @@ private final class PingBarController: NSObject {
 
         button.title = "Ping ..."
         button.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
-        button.image = symbol("dot.radiowaves.left.and.right")
-        button.imagePosition = .imageLeading
-        button.imageScaling = .scaleProportionallyDown
+        button.image = nil
         button.contentTintColor = nil
         button.toolTip = "PingBar"
     }
 
     private func configureMenu() {
         menu.autoenablesItems = false
-
-        summaryItem.view = summaryView
 
         let refreshItem = NSMenuItem(
             title: "Rafraichir maintenant",
@@ -316,8 +220,6 @@ private final class PingBarController: NSObject {
         quitItem.target = self
         quitItem.image = symbol("power")
 
-        menu.addItem(summaryItem)
-        menu.addItem(.separator())
         menu.addItem(refreshItem)
         menu.addItem(targetItem)
         menu.addItem(.separator())
@@ -330,7 +232,6 @@ private final class PingBarController: NSObject {
         let presentation = presentation(for: result)
 
         applyStatusButton(presentation)
-        summaryView.update(result: result, presentation: presentation)
     }
 
     private func applyStatusButton(_ presentation: StatusPresentation) {
@@ -339,7 +240,7 @@ private final class PingBarController: NSObject {
         }
 
         button.title = presentation.buttonTitle
-        button.image = symbol(presentation.symbolName)
+        button.image = nil
         button.contentTintColor = nil
         button.toolTip = presentation.toolTip
     }
@@ -349,38 +250,25 @@ private final class PingBarController: NSObject {
         case .measuring:
             return StatusPresentation(
                 buttonTitle: "Ping ...",
-                summaryTitle: "Ping ...",
-                color: .systemBlue,
-                symbolName: "dot.radiowaves.left.and.right",
                 toolTip: "Ping vers \(result.host)"
             )
 
         case .success(let milliseconds):
             let latency = formatLatency(milliseconds)
-            let style = style(for: milliseconds)
             return StatusPresentation(
                 buttonTitle: latency,
-                summaryTitle: latency,
-                color: style.color,
-                symbolName: style.symbolName,
                 toolTip: "Ping vers \(result.host): \(latency)"
             )
 
         case .timeout:
             return StatusPresentation(
                 buttonTitle: "Timeout",
-                summaryTitle: "Timeout",
-                color: .systemRed,
-                symbolName: "exclamationmark.triangle.fill",
                 toolTip: "Ping vers \(result.host): timeout"
             )
 
         case .failure(let message):
             return StatusPresentation(
                 buttonTitle: "Ping ERR",
-                summaryTitle: "Ping ERR",
-                color: .systemRed,
-                symbolName: "xmark.octagon.fill",
                 toolTip: "Ping vers \(result.host): \(message)"
             )
         }
@@ -426,17 +314,6 @@ private final class PingBarController: NSObject {
         }
 
         return "\(Int(milliseconds.rounded())) ms"
-    }
-
-    private func style(for milliseconds: Double) -> (color: NSColor, symbolName: String) {
-        switch milliseconds {
-        case ..<60:
-            return (.systemGreen, "checkmark.circle.fill")
-        case ..<120:
-            return (.systemOrange, "exclamationmark.circle.fill")
-        default:
-            return (.systemRed, "exclamationmark.triangle.fill")
-        }
     }
 
     private func symbol(_ name: String) -> NSImage? {

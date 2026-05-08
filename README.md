@@ -4,8 +4,6 @@ Petite app macOS de barre de menu qui affiche le ping actuel vers une cible.
 
 Par defaut, la cible est `1.1.1.1`. Depuis le menu, vous pouvez rafraichir la mesure, changer la cible, ou quitter l'app.
 
-La barre de menu affiche une icone et une couleur selon l'etat du ping: vert pour une bonne latence, orange pour une latence moyenne, rouge pour une latence elevee ou une erreur.
-
 ## Developpement
 
 ```sh
