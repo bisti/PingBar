@@ -4,6 +4,8 @@ Petite app macOS de barre de menu qui affiche le ping actuel vers une cible.
 
 Par defaut, la cible est `1.1.1.1`. Depuis le menu, vous pouvez changer la cible, configurer l'intervalle de ping, ou quitter l'app.
 
+Les intervalles sont volontairement approximatifs: l'app laisse macOS grouper les reveils du timer pour limiter l'impact batterie.
+
 ## Developpement
 
 ```sh

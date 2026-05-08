@@ -234,6 +234,7 @@ private final class PingMonitor: NSObject {
             userInfo: nil,
             repeats: true
         )
+        timer.tolerance = min(interval * 0.2, 5)
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
