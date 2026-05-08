@@ -70,6 +70,15 @@ private struct PingCommand: Sendable {
     }
 }
 
+private struct StatusPresentation {
+    let buttonTitle: String
+    let summaryTitle: String
+    let detail: String
+    let color: NSColor
+    let symbolName: String
+    let toolTip: String
+}
+
 @MainActor
 private final class PingMonitor: NSObject {
     var onUpdate: ((PingResult) -> Void)?
@@ -145,14 +154,115 @@ private final class PingMonitor: NSObject {
 }
 
 @MainActor
+private final class StatusDotView: NSView {
+    var color: NSColor = .systemGray {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 10, height: 10)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        color.setFill()
+        NSBezierPath(ovalIn: bounds.insetBy(dx: 1, dy: 1)).fill()
+    }
+}
+
+@MainActor
+private final class PingSummaryView: NSView {
+    private let dotView = StatusDotView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+    private let appLabel = NSTextField(labelWithString: "PingBar")
+    private let latencyLabel = NSTextField(labelWithString: "Ping ...")
+    private let detailLabel = NSTextField(labelWithString: "Mesure en cours")
+    private let hostLabel = NSTextField(labelWithString: "Cible: 1.1.1.1")
+    private let updatedLabel = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        buildView()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(result: PingResult, presentation: StatusPresentation, updatedAt: String) {
+        dotView.color = presentation.color
+        latencyLabel.stringValue = presentation.summaryTitle
+        latencyLabel.textColor = presentation.color
+        detailLabel.stringValue = presentation.detail
+        hostLabel.stringValue = "Cible: \(result.host)"
+        updatedLabel.stringValue = "Derniere mesure: \(updatedAt)"
+    }
+
+    private func buildView() {
+        appLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        appLabel.textColor = .secondaryLabelColor
+
+        latencyLabel.font = .monospacedDigitSystemFont(ofSize: 25, weight: .bold)
+        latencyLabel.lineBreakMode = .byTruncatingTail
+        latencyLabel.maximumNumberOfLines = 1
+
+        detailLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        detailLabel.textColor = .labelColor
+        detailLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.maximumNumberOfLines = 1
+
+        hostLabel.font = .systemFont(ofSize: 12)
+        hostLabel.textColor = .secondaryLabelColor
+        hostLabel.lineBreakMode = .byTruncatingTail
+        hostLabel.maximumNumberOfLines = 1
+
+        updatedLabel.font = .systemFont(ofSize: 11)
+        updatedLabel.textColor = .tertiaryLabelColor
+        updatedLabel.lineBreakMode = .byTruncatingTail
+        updatedLabel.maximumNumberOfLines = 1
+
+        let headerStack = NSStackView(views: [dotView, appLabel])
+        headerStack.orientation = .horizontal
+        headerStack.alignment = .centerY
+        headerStack.spacing = 7
+
+        let stack = NSStackView(views: [headerStack, latencyLabel, detailLabel, hostLabel, updatedLabel])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            dotView.widthAnchor.constraint(equalToConstant: 10),
+            dotView.heightAnchor.constraint(equalToConstant: 10),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 11),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -11)
+        ])
+    }
+}
+
+@MainActor
 private final class PingBarController: NSObject {
     private let defaults = UserDefaults.standard
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let monitor: PingMonitor
     private let menu = NSMenu()
+    private let summaryItem = NSMenuItem()
+    private let summaryView = PingSummaryView(frame: NSRect(x: 0, y: 0, width: 280, height: 108))
     private let hostItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let lastItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let stateItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .medium
+        return formatter
+    }()
 
     override init() {
         let savedHost = defaults.string(forKey: hostDefaultsKey).flatMap(PingParser.sanitizedHost)
@@ -176,16 +286,25 @@ private final class PingBarController: NSObject {
             return
         }
 
-        button.title = "Ping ..."
+        button.attributedTitle = menuBarTitle("Ping ...", color: .systemBlue)
+        button.image = symbol("dot.radiowaves.left.and.right")
+        button.imagePosition = .imageLeading
+        button.imageScaling = .scaleProportionallyDown
+        button.contentTintColor = .systemBlue
         button.toolTip = "PingBar"
     }
 
     private func configureMenu() {
         menu.autoenablesItems = false
 
+        summaryItem.view = summaryView
+
         hostItem.isEnabled = false
         lastItem.isEnabled = false
         stateItem.isEnabled = false
+        hostItem.image = symbol("globe")
+        lastItem.image = symbol("clock")
+        stateItem.image = symbol("circle.fill")
 
         let refreshItem = NSMenuItem(
             title: "Rafraichir maintenant",
@@ -193,6 +312,7 @@ private final class PingBarController: NSObject {
             keyEquivalent: "r"
         )
         refreshItem.target = self
+        refreshItem.image = symbol("arrow.clockwise")
 
         let targetItem = NSMenuItem(
             title: "Changer la cible...",
@@ -200,6 +320,7 @@ private final class PingBarController: NSObject {
             keyEquivalent: ","
         )
         targetItem.target = self
+        targetItem.image = symbol("target")
 
         let quitItem = NSMenuItem(
             title: "Quitter PingBar",
@@ -207,7 +328,10 @@ private final class PingBarController: NSObject {
             keyEquivalent: "q"
         )
         quitItem.target = self
+        quitItem.image = symbol("power")
 
+        menu.addItem(summaryItem)
+        menu.addItem(.separator())
         menu.addItem(hostItem)
         menu.addItem(lastItem)
         menu.addItem(stateItem)
@@ -221,33 +345,72 @@ private final class PingBarController: NSObject {
     }
 
     private func render(_ result: PingResult) {
-        hostItem.title = "Cible: \(result.host)"
+        let presentation = presentation(for: result)
+        let updatedAt = timeFormatter.string(from: result.date)
 
+        applyStatusButton(presentation)
+        summaryView.update(result: result, presentation: presentation, updatedAt: updatedAt)
+
+        hostItem.title = "Cible: \(result.host)"
+        lastItem.title = "Derniere mesure: \(updatedAt)"
+        stateItem.title = presentation.detail
+        stateItem.image = symbol(presentation.symbolName)
+    }
+
+    private func applyStatusButton(_ presentation: StatusPresentation) {
+        guard let button = statusItem.button else {
+            return
+        }
+
+        button.attributedTitle = menuBarTitle(presentation.buttonTitle, color: presentation.color)
+        button.image = symbol(presentation.symbolName)
+        button.contentTintColor = presentation.color
+        button.toolTip = presentation.toolTip
+    }
+
+    private func presentation(for result: PingResult) -> StatusPresentation {
         switch result.status {
         case .measuring:
-            statusItem.button?.title = "Ping ..."
-            lastItem.title = "Dernier ping: mesure en cours"
-            stateItem.title = "Etat: mesure"
-            statusItem.button?.toolTip = "Ping vers \(result.host)"
+            return StatusPresentation(
+                buttonTitle: "Ping ...",
+                summaryTitle: "Ping ...",
+                detail: "Mesure en cours",
+                color: .systemBlue,
+                symbolName: "dot.radiowaves.left.and.right",
+                toolTip: "Ping vers \(result.host)"
+            )
 
         case .success(let milliseconds):
             let latency = formatLatency(milliseconds)
-            statusItem.button?.title = latency
-            lastItem.title = "Dernier ping: \(latency)"
-            stateItem.title = "Etat: \(quality(for: milliseconds))"
-            statusItem.button?.toolTip = "Ping vers \(result.host): \(latency)"
+            let quality = quality(for: milliseconds)
+            return StatusPresentation(
+                buttonTitle: latency,
+                summaryTitle: latency,
+                detail: "Qualite: \(quality.label)",
+                color: quality.color,
+                symbolName: quality.symbolName,
+                toolTip: "Ping vers \(result.host): \(latency)"
+            )
 
         case .timeout:
-            statusItem.button?.title = "Timeout"
-            lastItem.title = "Dernier ping: timeout"
-            stateItem.title = "Etat: pas de reponse"
-            statusItem.button?.toolTip = "Ping vers \(result.host): timeout"
+            return StatusPresentation(
+                buttonTitle: "Timeout",
+                summaryTitle: "Timeout",
+                detail: "Pas de reponse",
+                color: .systemRed,
+                symbolName: "exclamationmark.triangle.fill",
+                toolTip: "Ping vers \(result.host): timeout"
+            )
 
         case .failure(let message):
-            statusItem.button?.title = "Ping ERR"
-            lastItem.title = "Dernier ping: erreur"
-            stateItem.title = "Etat: \(message)"
-            statusItem.button?.toolTip = "Ping vers \(result.host): \(message)"
+            return StatusPresentation(
+                buttonTitle: "Ping ERR",
+                summaryTitle: "Ping ERR",
+                detail: message,
+                color: .systemRed,
+                symbolName: "xmark.octagon.fill",
+                toolTip: "Ping vers \(result.host): \(message)"
+            )
         }
     }
 
@@ -293,15 +456,34 @@ private final class PingBarController: NSObject {
         return "\(Int(milliseconds.rounded())) ms"
     }
 
-    private func quality(for milliseconds: Double) -> String {
+    private func quality(for milliseconds: Double) -> (label: String, color: NSColor, symbolName: String) {
         switch milliseconds {
         case ..<60:
-            return "bon"
+            return ("Bon", .systemGreen, "checkmark.circle.fill")
         case ..<120:
-            return "moyen"
+            return ("Moyen", .systemOrange, "exclamationmark.circle.fill")
         default:
-            return "eleve"
+            return ("Eleve", .systemRed, "exclamationmark.triangle.fill")
         }
+    }
+
+    private func menuBarTitle(_ title: String, color: NSColor) -> NSAttributedString {
+        NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold),
+                .foregroundColor: color
+            ]
+        )
+    }
+
+    private func symbol(_ name: String) -> NSImage? {
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) else {
+            return nil
+        }
+
+        image.isTemplate = true
+        return image
     }
 }
 
