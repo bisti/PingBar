@@ -269,11 +269,12 @@ private final class PingBarController: NSObject {
             return
         }
 
-        button.attributedTitle = menuBarTitle("Ping ...", color: .systemBlue)
+        button.title = "Ping ..."
+        button.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
         button.image = symbol("dot.radiowaves.left.and.right")
         button.imagePosition = .imageLeading
         button.imageScaling = .scaleProportionallyDown
-        button.contentTintColor = .systemBlue
+        button.contentTintColor = nil
         button.toolTip = "PingBar"
     }
 
@@ -328,9 +329,9 @@ private final class PingBarController: NSObject {
             return
         }
 
-        button.attributedTitle = menuBarTitle(presentation.buttonTitle, color: presentation.color)
+        button.title = presentation.buttonTitle
         button.image = symbol(presentation.symbolName)
-        button.contentTintColor = presentation.color
+        button.contentTintColor = nil
         button.toolTip = presentation.toolTip
     }
 
@@ -427,16 +428,6 @@ private final class PingBarController: NSObject {
         default:
             return (.systemRed, "exclamationmark.triangle.fill")
         }
-    }
-
-    private func menuBarTitle(_ title: String, color: NSColor) -> NSAttributedString {
-        NSAttributedString(
-            string: title,
-            attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold),
-                .foregroundColor: color
-            ]
-        )
     }
 
     private func symbol(_ name: String) -> NSImage? {
