@@ -436,7 +436,7 @@ private final class PingBarController: NSObject, NSMenuDelegate {
 
         case .notFound:
             launchAtLoginItem.state = .off
-            launchAtLoginItem.isEnabled = false
+            launchAtLoginItem.isEnabled = true
             launchAtLoginItem.title = "Lancer au demarrage"
 
         @unknown default:
