@@ -11,7 +11,7 @@ swift test
 swift run PingBar
 ```
 
-`swift run PingBar` lance l'app sans packaging. Elle apparait dans la barre de menu et se ferme depuis le menu `Quitter PingBar`.
+`swift run PingBar` lance l'app sans packaging. Elle apparait dans la barre de menu et se ferme depuis le menu `Quitter`.
 
 ## Creer l'app macOS
 

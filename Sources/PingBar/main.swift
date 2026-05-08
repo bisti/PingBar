@@ -335,7 +335,7 @@ private final class PingBarController: NSObject {
         intervalItem.submenu = buildIntervalMenu()
 
         let quitItem = NSMenuItem(
-            title: "Quitter PingBar",
+            title: "Quitter",
             action: #selector(quit),
             keyEquivalent: ""
         )
