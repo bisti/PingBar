@@ -86,6 +86,7 @@ private final class PingMonitor: NSObject {
     private var timer: Timer?
     private var isRunning = false
     private var needsRefresh = false
+    private var hasCompletedMeasurement = false
 
     init(host: String, interval: TimeInterval = 5) {
         self.host = host
@@ -108,6 +109,10 @@ private final class PingMonitor: NSObject {
     }
 
     func updateHost(_ host: String) {
+        if self.host != host {
+            hasCompletedMeasurement = false
+        }
+
         self.host = host
         refresh()
     }
@@ -120,7 +125,10 @@ private final class PingMonitor: NSObject {
 
         isRunning = true
         let measuredHost = host
-        onUpdate?(PingResult(host: measuredHost, status: .measuring))
+
+        if !hasCompletedMeasurement {
+            onUpdate?(PingResult(host: measuredHost, status: .measuring))
+        }
 
         Task { [weak self, measuredHost] in
             let status = await Task.detached(priority: .utility) {
@@ -139,6 +147,7 @@ private final class PingMonitor: NSObject {
         isRunning = false
 
         if host == measuredHost {
+            hasCompletedMeasurement = true
             onUpdate?(PingResult(host: measuredHost, status: status))
         } else {
             needsRefresh = true
