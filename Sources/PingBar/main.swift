@@ -329,10 +329,8 @@ private final class PingBarController: NSObject {
             keyEquivalent: ""
         )
         targetItem.target = self
-        targetItem.image = symbol("target")
 
         let intervalItem = NSMenuItem(title: "Intervalle", action: nil, keyEquivalent: "")
-        intervalItem.image = symbol("timer")
         intervalItem.submenu = buildIntervalMenu()
 
         let quitItem = NSMenuItem(
@@ -341,7 +339,6 @@ private final class PingBarController: NSObject {
             keyEquivalent: ""
         )
         quitItem.target = self
-        quitItem.image = symbol("power")
 
         menu.addItem(targetItem)
         menu.addItem(intervalItem)
@@ -471,14 +468,6 @@ private final class PingBarController: NSObject {
         return seconds == 1 ? "1 seconde" : "\(seconds) secondes"
     }
 
-    private func symbol(_ name: String) -> NSImage? {
-        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) else {
-            return nil
-        }
-
-        image.isTemplate = true
-        return image
-    }
 }
 
 @MainActor
