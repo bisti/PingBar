@@ -9,6 +9,7 @@ private let intervalDefaultsKey = "PingBarInterval"
 private let intervalOptions: [TimeInterval] = [1, 2, 5, 10, 30, 60]
 private let initialRetryDelay: TimeInterval = 5
 private let maximumRetryDelay: TimeInterval = 300
+private let statusItemLength: CGFloat = 64
 
 private enum PingStatus: Sendable {
     case measuring
@@ -31,6 +32,29 @@ private enum PingLineEvent: Sendable {
 private struct StatusPresentation: Equatable {
     let buttonTitle: String
     let toolTip: String
+}
+
+private enum LatencyDisplay: Equatable {
+    case tenths(Int)
+    case milliseconds(Int)
+
+    init(milliseconds: Double) {
+        if milliseconds < 10 {
+            self = .tenths(Int((milliseconds * 10).rounded()))
+        } else {
+            self = .milliseconds(Int(milliseconds.rounded()))
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .tenths(let tenths):
+            return "\(tenths / 10).\(tenths % 10) ms"
+
+        case .milliseconds(let milliseconds):
+            return "\(milliseconds) ms"
+        }
+    }
 }
 
 @MainActor
@@ -334,7 +358,7 @@ private final class PingMonitor: NSObject {
             return nil
         }
 
-        if canContainLatency(line), let latency = PingParser.latencyMilliseconds(from: line) {
+        if let latency = PingParser.latencyMilliseconds(from: line) {
             return .success(milliseconds: latency)
         }
 
@@ -348,12 +372,6 @@ private final class PingMonitor: NSObject {
         }
 
         return nil
-    }
-
-    nonisolated private static func canContainLatency(_ line: String) -> Bool {
-        line.contains("time=")
-            || line.contains("time<")
-            || line.contains("round-trip")
     }
 
     nonisolated private static func isFatalPingLine(_ line: String) -> Bool {
@@ -377,16 +395,20 @@ private final class PingMonitor: NSObject {
 @MainActor
 private final class PingBarController: NSObject {
     private let defaults = UserDefaults.standard
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let statusItem = NSStatusBar.system.statusItem(withLength: statusItemLength)
     private let monitor: PingMonitor
     private let menu = NSMenu()
     private var intervalItems: [NSMenuItem] = []
     private var lastPresentation: StatusPresentation?
+    private var lastLatencyDisplay: LatencyDisplay?
+    private var successToolTip: String
 
     override init() {
         let savedHost = defaults.string(forKey: hostDefaultsKey).flatMap(PingParser.sanitizedHost)
         let savedInterval = Self.savedInterval(from: defaults)
-        monitor = PingMonitor(host: savedHost ?? defaultHost, interval: savedInterval)
+        let host = savedHost ?? defaultHost
+        monitor = PingMonitor(host: host, interval: savedInterval)
+        successToolTip = Self.successToolTip(for: host)
         super.init()
     }
 
@@ -443,6 +465,18 @@ private final class PingBarController: NSObject {
     }
 
     private func render(_ result: PingResult) {
+        if case .success(let milliseconds) = result.status {
+            let display = LatencyDisplay(milliseconds: milliseconds)
+            guard display != lastLatencyDisplay else {
+                return
+            }
+
+            lastLatencyDisplay = display
+            applyStatusButton(StatusPresentation(buttonTitle: display.title, toolTip: successToolTip))
+            return
+        }
+
+        lastLatencyDisplay = nil
         let presentation = presentation(for: result)
 
         applyStatusButton(presentation)
@@ -477,10 +511,10 @@ private final class PingBarController: NSObject {
             )
 
         case .success(let milliseconds):
-            let latency = formatLatency(milliseconds)
+            let latency = LatencyDisplay(milliseconds: milliseconds).title
             return StatusPresentation(
                 buttonTitle: latency,
-                toolTip: "Ping vers \(result.host)"
+                toolTip: successToolTip
             )
 
         case .timeout:
@@ -504,6 +538,8 @@ private final class PingBarController: NSObject {
         }
 
         defaults.set(host, forKey: hostDefaultsKey)
+        successToolTip = Self.successToolTip(for: host)
+        lastLatencyDisplay = nil
         monitor.updateHost(host)
     }
 
@@ -520,15 +556,6 @@ private final class PingBarController: NSObject {
 
     @objc private func quit() {
         NSApp.terminate(nil)
-    }
-
-    private func formatLatency(_ milliseconds: Double) -> String {
-        if milliseconds < 10 {
-            let tenths = Int((milliseconds * 10).rounded())
-            return "\(tenths / 10).\(tenths % 10) ms"
-        }
-
-        return "\(Int(milliseconds.rounded())) ms"
     }
 
     private func buildIntervalMenu() -> NSMenu {
@@ -569,6 +596,10 @@ private final class PingBarController: NSObject {
     private func intervalTitle(_ interval: TimeInterval) -> String {
         let seconds = Int(interval)
         return seconds == 1 ? "1 seconde" : "\(seconds) secondes"
+    }
+
+    private static func successToolTip(for host: String) -> String {
+        "Ping vers \(host)"
     }
 
 }
