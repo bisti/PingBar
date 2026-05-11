@@ -11,22 +11,14 @@ private let initialRetryDelay: TimeInterval = 5
 private let maximumRetryDelay: TimeInterval = 300
 
 private enum LatencyDisplay: Equatable, Sendable {
-    case tenths(Int)
     case milliseconds(Int)
 
     init(milliseconds: Double) {
-        if milliseconds < 10 {
-            self = .tenths(Int((milliseconds * 10).rounded()))
-        } else {
-            self = .milliseconds(Int(milliseconds.rounded()))
-        }
+        self = .milliseconds(Int(milliseconds.rounded()))
     }
 
     var title: String {
         switch self {
-        case .tenths(let tenths):
-            return "\(tenths / 10).\(tenths % 10) ms"
-
         case .milliseconds(let milliseconds):
             return "\(milliseconds) ms"
         }
