@@ -11,30 +11,7 @@ private let initialRetryDelay: TimeInterval = 5
 private let maximumRetryDelay: TimeInterval = 300
 private let statusItemLength: CGFloat = 64
 
-private enum PingStatus: Sendable {
-    case measuring
-    case success(milliseconds: Double)
-    case timeout
-    case failure(message: String)
-}
-
-private struct PingResult: Sendable {
-    let host: String
-    let status: PingStatus
-}
-
-private enum PingLineEvent: Sendable {
-    case success(milliseconds: Double)
-    case timeout
-    case failure(message: String)
-}
-
-private struct StatusPresentation: Equatable {
-    let buttonTitle: String
-    let toolTip: String
-}
-
-private enum LatencyDisplay: Equatable {
+private enum LatencyDisplay: Equatable, Sendable {
     case tenths(Int)
     case milliseconds(Int)
 
@@ -55,6 +32,29 @@ private enum LatencyDisplay: Equatable {
             return "\(milliseconds) ms"
         }
     }
+}
+
+private enum PingStatus: Sendable {
+    case measuring
+    case success(display: LatencyDisplay)
+    case timeout
+    case failure(message: String)
+}
+
+private struct PingResult: Sendable {
+    let host: String
+    let status: PingStatus
+}
+
+private enum PingLineEvent: Sendable {
+    case success(display: LatencyDisplay)
+    case timeout
+    case failure(message: String)
+}
+
+private struct StatusPresentation: Equatable {
+    let buttonTitle: String
+    let toolTip: String
 }
 
 @MainActor
@@ -256,6 +256,8 @@ private final class PingMonitor: NSObject {
 
         let output = outputPipe.fileHandleForReading
         readerTask = Task.detached(priority: .utility) { [weak self, generation, output] in
+            var lastLatencyDisplay: LatencyDisplay?
+
             do {
                 for try await line in output.bytes.lines {
                     guard !Task.isCancelled else {
@@ -264,6 +266,16 @@ private final class PingMonitor: NSObject {
 
                     guard let event = Self.event(from: line) else {
                         continue
+                    }
+
+                    if case .success(let display) = event {
+                        guard display != lastLatencyDisplay else {
+                            continue
+                        }
+
+                        lastLatencyDisplay = display
+                    } else {
+                        lastLatencyDisplay = nil
                     }
 
                     await self?.handlePingEvent(event, generation: generation)
@@ -299,10 +311,10 @@ private final class PingMonitor: NSObject {
         }
 
         switch event {
-        case .success(let latency):
+        case .success(let display):
             retryDelay = initialRetryDelay
             hasCompletedMeasurement = true
-            onUpdate?(PingResult(host: host, status: .success(milliseconds: latency)))
+            onUpdate?(PingResult(host: host, status: .success(display: display)))
 
         case .timeout:
             hasCompletedMeasurement = true
@@ -359,7 +371,7 @@ private final class PingMonitor: NSObject {
         }
 
         if let latency = PingParser.latencyMilliseconds(from: line) {
-            return .success(milliseconds: latency)
+            return .success(display: LatencyDisplay(milliseconds: latency))
         }
 
         if line.hasPrefix("Request timeout")
@@ -400,7 +412,6 @@ private final class PingBarController: NSObject {
     private let menu = NSMenu()
     private var intervalItems: [NSMenuItem] = []
     private var lastPresentation: StatusPresentation?
-    private var lastLatencyDisplay: LatencyDisplay?
     private var successToolTip: String
 
     override init() {
@@ -465,18 +476,6 @@ private final class PingBarController: NSObject {
     }
 
     private func render(_ result: PingResult) {
-        if case .success(let milliseconds) = result.status {
-            let display = LatencyDisplay(milliseconds: milliseconds)
-            guard display != lastLatencyDisplay else {
-                return
-            }
-
-            lastLatencyDisplay = display
-            applyStatusButton(StatusPresentation(buttonTitle: display.title, toolTip: successToolTip))
-            return
-        }
-
-        lastLatencyDisplay = nil
         let presentation = presentation(for: result)
 
         applyStatusButton(presentation)
@@ -510,10 +509,9 @@ private final class PingBarController: NSObject {
                 toolTip: "Ping vers \(result.host)"
             )
 
-        case .success(let milliseconds):
-            let latency = LatencyDisplay(milliseconds: milliseconds).title
+        case .success(let display):
             return StatusPresentation(
-                buttonTitle: latency,
+                buttonTitle: display.title,
                 toolTip: successToolTip
             )
 
@@ -539,7 +537,6 @@ private final class PingBarController: NSObject {
 
         defaults.set(host, forKey: hostDefaultsKey)
         successToolTip = Self.successToolTip(for: host)
-        lastLatencyDisplay = nil
         monitor.updateHost(host)
     }
 
