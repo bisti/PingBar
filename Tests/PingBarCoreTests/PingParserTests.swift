@@ -10,6 +10,14 @@ final class PingParserTests: XCTestCase {
         XCTAssertEqual(PingParser.latencyMilliseconds(from: output), 12.345)
     }
 
+    func testParsesLatencyFromLessThanPacketLine() {
+        let output = """
+        64 bytes from 1.1.1.1: icmp_seq=0 ttl=57 time<1 ms
+        """
+
+        XCTAssertEqual(PingParser.latencyMilliseconds(from: output), 1)
+    }
+
     func testParsesLatencyFromRoundTripSummary() {
         let output = """
         round-trip min/avg/max/stddev = 9.100/10.200/11.300/0.400 ms

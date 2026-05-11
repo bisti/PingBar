@@ -1,26 +1,12 @@
 import Foundation
 
 public enum PingParser {
-    private static let timeRegex = try! NSRegularExpression(
-        pattern: #"time[=<]\s*([0-9]+(?:\.[0-9]+)?)\s*ms"#,
-        options: []
-    )
-
-    private static let roundTripRegex = try! NSRegularExpression(
-        pattern: #"round-trip.*=\s*([0-9]+(?:\.[0-9]+)?)/([0-9]+(?:\.[0-9]+)?)/"#,
-        options: []
-    )
-
     public static func latencyMilliseconds(from output: String) -> Double? {
-        if let match = firstCapture(in: output, using: timeRegex, group: 1) {
-            return Double(match)
+        if let latency = packetLatencyMilliseconds(from: output) {
+            return latency
         }
 
-        if let average = firstCapture(in: output, using: roundTripRegex, group: 2) {
-            return Double(average)
-        }
-
-        return nil
+        return roundTripAverageMilliseconds(from: output)
     }
 
     public static func sanitizedHost(from input: String) -> String? {
@@ -37,20 +23,54 @@ public enum PingParser {
         return host
     }
 
-    private static func firstCapture(
-        in output: String,
-        using regex: NSRegularExpression,
-        group: Int
-    ) -> String? {
-        let range = NSRange(output.startIndex..<output.endIndex, in: output)
-        guard let match = regex.firstMatch(in: output, options: [], range: range) else {
+    private static func packetLatencyMilliseconds(from output: String) -> Double? {
+        guard let marker = output.range(of: "time=") ?? output.range(of: "time<") else {
             return nil
         }
 
-        guard let captureRange = Range(match.range(at: group), in: output) else {
+        return number(after: marker.upperBound, in: output)
+    }
+
+    private static func roundTripAverageMilliseconds(from output: String) -> Double? {
+        guard output.contains("round-trip"),
+              let equals = output.firstIndex(of: "="),
+              let slash = output[equals...].firstIndex(of: "/") else {
             return nil
         }
 
-        return String(output[captureRange])
+        let averageStart = output.index(after: slash)
+        return number(after: averageStart, in: output)
+    }
+
+    private static func number(after index: String.Index, in output: String) -> Double? {
+        var start = index
+
+        while start < output.endIndex, output[start].isWhitespace {
+            start = output.index(after: start)
+        }
+
+        var end = start
+        var hasDigit = false
+        var hasDecimalSeparator = false
+
+        while end < output.endIndex {
+            let character = output[end]
+
+            if character.isNumber {
+                hasDigit = true
+            } else if character == ".", !hasDecimalSeparator {
+                hasDecimalSeparator = true
+            } else {
+                break
+            }
+
+            end = output.index(after: end)
+        }
+
+        guard hasDigit else {
+            return nil
+        }
+
+        return Double(output[start..<end])
     }
 }

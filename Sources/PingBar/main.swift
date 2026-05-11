@@ -22,7 +22,13 @@ private struct PingResult: Sendable {
     let status: PingStatus
 }
 
-private struct StatusPresentation {
+private enum PingLineEvent: Sendable {
+    case success(milliseconds: Double)
+    case timeout
+    case failure(message: String)
+}
+
+private struct StatusPresentation: Equatable {
     let buttonTitle: String
     let toolTip: String
 }
@@ -225,19 +231,23 @@ private final class PingMonitor: NSObject {
         }
 
         let output = outputPipe.fileHandleForReading
-        readerTask = Task { [weak self, generation, output] in
+        readerTask = Task.detached(priority: .utility) { [weak self, generation, output] in
             do {
                 for try await line in output.bytes.lines {
                     guard !Task.isCancelled else {
                         return
                     }
 
-                    self?.handlePingLine(line, generation: generation)
+                    guard let event = Self.event(from: line) else {
+                        continue
+                    }
+
+                    await self?.handlePingEvent(event, generation: generation)
                 }
 
-                self?.handlePingEnded(generation: generation)
+                await self?.handlePingEnded(generation: generation)
             } catch {
-                self?.handlePingEnded(generation: generation)
+                await self?.handlePingEnded(generation: generation)
             }
         }
     }
@@ -259,32 +269,24 @@ private final class PingMonitor: NSObject {
         retryTimer = nil
     }
 
-    private func handlePingLine(_ line: String, generation: Int) {
+    private func handlePingEvent(_ event: PingLineEvent, generation: Int) {
         guard generation == self.generation else {
             return
         }
 
-        let line = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !line.isEmpty else {
-            return
-        }
-
-        if let latency = PingParser.latencyMilliseconds(from: line) {
+        switch event {
+        case .success(let latency):
             retryDelay = initialRetryDelay
             hasCompletedMeasurement = true
             onUpdate?(PingResult(host: host, status: .success(milliseconds: latency)))
-            return
-        }
 
-        if line.localizedCaseInsensitiveContains("request timeout") {
+        case .timeout:
             hasCompletedMeasurement = true
             onUpdate?(PingResult(host: host, status: .timeout))
-            return
-        }
 
-        if isFatalPingLine(line) {
+        case .failure(let message):
             hasCompletedMeasurement = true
-            onUpdate?(PingResult(host: host, status: .failure(message: failureMessage(from: line))))
+            onUpdate?(PingResult(host: host, status: .failure(message: message)))
             scheduleRetry()
         }
     }
@@ -327,14 +329,33 @@ private final class PingMonitor: NSObject {
         "\(Int(interval))"
     }
 
-    private func isFatalPingLine(_ line: String) -> Bool {
-        let lowercased = line.lowercased()
-        return lowercased.hasPrefix("ping:")
-            || lowercased.contains("sendto:")
-            || lowercased.contains("recvmsg:")
+    nonisolated private static func event(from line: String) -> PingLineEvent? {
+        guard !line.isEmpty else {
+            return nil
+        }
+
+        if let latency = PingParser.latencyMilliseconds(from: line) {
+            return .success(milliseconds: latency)
+        }
+
+        if line.range(of: "request timeout", options: .caseInsensitive) != nil {
+            return .timeout
+        }
+
+        if isFatalPingLine(line) {
+            return .failure(message: failureMessage(from: line))
+        }
+
+        return nil
     }
 
-    private func failureMessage(from line: String) -> String {
+    nonisolated private static func isFatalPingLine(_ line: String) -> Bool {
+        line.range(of: "ping:", options: [.anchored, .caseInsensitive]) != nil
+            || line.range(of: "sendto:", options: .caseInsensitive) != nil
+            || line.range(of: "recvmsg:", options: .caseInsensitive) != nil
+    }
+
+    nonisolated private static func failureMessage(from line: String) -> String {
         if let range = line.range(of: "ping: ", options: .caseInsensitive) {
             return String(line[range.upperBound...])
         }
@@ -350,6 +371,7 @@ private final class PingBarController: NSObject {
     private let monitor: PingMonitor
     private let menu = NSMenu()
     private var intervalItems: [NSMenuItem] = []
+    private var lastPresentation: StatusPresentation?
 
     override init() {
         let savedHost = defaults.string(forKey: hostDefaultsKey).flatMap(PingParser.sanitizedHost)
@@ -417,14 +439,23 @@ private final class PingBarController: NSObject {
     }
 
     private func applyStatusButton(_ presentation: StatusPresentation) {
+        guard presentation != lastPresentation else {
+            return
+        }
+
         guard let button = statusItem.button else {
             return
         }
 
-        button.title = presentation.buttonTitle
-        button.image = nil
-        button.contentTintColor = nil
-        button.toolTip = presentation.toolTip
+        if button.title != presentation.buttonTitle {
+            button.title = presentation.buttonTitle
+        }
+
+        if button.toolTip != presentation.toolTip {
+            button.toolTip = presentation.toolTip
+        }
+
+        lastPresentation = presentation
     }
 
     private func presentation(for result: PingResult) -> StatusPresentation {
