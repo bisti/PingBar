@@ -9,7 +9,6 @@ private let intervalDefaultsKey = "PingBarInterval"
 private let intervalOptions: [TimeInterval] = [1, 2, 5, 10, 30, 60]
 private let initialRetryDelay: TimeInterval = 5
 private let maximumRetryDelay: TimeInterval = 300
-private let statusItemLength: CGFloat = 64
 
 private enum LatencyDisplay: Equatable, Sendable {
     case tenths(Int)
@@ -407,7 +406,7 @@ private final class PingMonitor: NSObject {
 @MainActor
 private final class PingBarController: NSObject {
     private let defaults = UserDefaults.standard
-    private let statusItem = NSStatusBar.system.statusItem(withLength: statusItemLength)
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let monitor: PingMonitor
     private let menu = NSMenu()
     private var intervalItems: [NSMenuItem] = []
