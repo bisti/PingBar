@@ -334,11 +334,12 @@ private final class PingMonitor: NSObject {
             return nil
         }
 
-        if let latency = PingParser.latencyMilliseconds(from: line) {
+        if canContainLatency(line), let latency = PingParser.latencyMilliseconds(from: line) {
             return .success(milliseconds: latency)
         }
 
-        if line.range(of: "request timeout", options: .caseInsensitive) != nil {
+        if line.hasPrefix("Request timeout")
+            || line.range(of: "request timeout", options: .caseInsensitive) != nil {
             return .timeout
         }
 
@@ -349,8 +350,17 @@ private final class PingMonitor: NSObject {
         return nil
     }
 
+    nonisolated private static func canContainLatency(_ line: String) -> Bool {
+        line.contains("time=")
+            || line.contains("time<")
+            || line.contains("round-trip")
+    }
+
     nonisolated private static func isFatalPingLine(_ line: String) -> Bool {
-        line.range(of: "ping:", options: [.anchored, .caseInsensitive]) != nil
+        line.hasPrefix("ping:")
+            || line.contains("sendto:")
+            || line.contains("recvmsg:")
+            || line.range(of: "ping:", options: [.anchored, .caseInsensitive]) != nil
             || line.range(of: "sendto:", options: .caseInsensitive) != nil
             || line.range(of: "recvmsg:", options: .caseInsensitive) != nil
     }
@@ -470,7 +480,7 @@ private final class PingBarController: NSObject {
             let latency = formatLatency(milliseconds)
             return StatusPresentation(
                 buttonTitle: latency,
-                toolTip: "Ping vers \(result.host): \(latency)"
+                toolTip: "Ping vers \(result.host)"
             )
 
         case .timeout:
@@ -514,7 +524,8 @@ private final class PingBarController: NSObject {
 
     private func formatLatency(_ milliseconds: Double) -> String {
         if milliseconds < 10 {
-            return String(format: "%.1f ms", milliseconds)
+            let tenths = Int((milliseconds * 10).rounded())
+            return "\(tenths / 10).\(tenths % 10) ms"
         }
 
         return "\(Int(milliseconds.rounded())) ms"
