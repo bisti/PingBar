@@ -10,6 +10,7 @@ private let intervalOptions: [TimeInterval] = [1, 2, 5, 10, 30, 60]
 private let initialRetryDelay: TimeInterval = 5
 private let maximumRetryDelay: TimeInterval = 300
 
+// Represents the latency exactly as it is shown in the menu bar.
 private enum LatencyDisplay: Equatable, Sendable {
     case milliseconds(Int)
 
@@ -25,6 +26,7 @@ private enum LatencyDisplay: Equatable, Sendable {
     }
 }
 
+// Keeps the process-facing ping state separate from the menu bar presentation.
 private enum PingStatus: Sendable {
     case measuring
     case success(display: LatencyDisplay)
@@ -37,6 +39,7 @@ private struct PingResult: Sendable {
     let status: PingStatus
 }
 
+// Internal events parsed from raw ping output before they reach the UI.
 private enum PingLineEvent: Sendable {
     case success(display: LatencyDisplay)
     case timeout
@@ -56,6 +59,7 @@ private final class TargetPanelController: NSObject, NSTextFieldDelegate {
     private var selectedHost: String?
 
     init(currentHost: String) {
+        // A custom panel gives more predictable spacing than NSAlert for this small form.
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 360, height: 172),
             styleMask: [.titled],
@@ -73,6 +77,7 @@ private final class TargetPanelController: NSObject, NSTextFieldDelegate {
     }
 
     func runModal() -> String? {
+        // Run the panel modally so callers can update the target synchronously.
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(input)
@@ -88,6 +93,7 @@ private final class TargetPanelController: NSObject, NSTextFieldDelegate {
     }
 
     private func buildContent(currentHost: String) {
+        // Build the form in code to keep the SwiftPM app free of nib/storyboard files.
         let contentView = NSView()
         contentView.translatesAutoresizingMaskIntoConstraints = false
         panel.contentView = contentView
@@ -141,6 +147,7 @@ private final class TargetPanelController: NSObject, NSTextFieldDelegate {
     }
 
     @objc private func confirm() {
+        // Validate before closing so invalid input never reaches the ping command.
         guard let host = PingParser.sanitizedHost(from: input.stringValue) else {
             errorLabel.stringValue = "Cible invalide."
             NSSound.beep()
@@ -167,6 +174,7 @@ private final class PingMonitor: NSObject {
     private var readerTask: Task<Void, Never>?
     private var retryTimer: Timer?
     private var retryDelay = initialRetryDelay
+    // Invalidates late events from an old ping process after host or interval changes.
     private var generation = 0
     private var hasCompletedMeasurement = false
 
@@ -210,6 +218,7 @@ private final class PingMonitor: NSObject {
             hasCompletedMeasurement = false
         }
 
+        // Interval changes keep the last value visible to avoid a distracting flash.
         if !hasCompletedMeasurement {
             onUpdate?(PingResult(host: host, status: .measuring))
         }
@@ -218,6 +227,7 @@ private final class PingMonitor: NSObject {
     }
 
     private func startPing(generation: Int) {
+        // Keep one ping process alive instead of launching a process per measurement.
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/sbin/ping")
         process.arguments = [
@@ -259,6 +269,7 @@ private final class PingMonitor: NSObject {
                         continue
                     }
 
+                    // Drop repeated displayed values before crossing back to the UI actor.
                     if case .success(let display) = event {
                         guard display != lastLatencyDisplay else {
                             continue
@@ -280,6 +291,7 @@ private final class PingMonitor: NSObject {
     }
 
     private func stopPing() {
+        // Cancel the reader before terminating the process so stale output is ignored.
         readerTask?.cancel()
         readerTask = nil
 
@@ -335,6 +347,7 @@ private final class PingMonitor: NSObject {
         let delay = retryDelay
         retryDelay = min(retryDelay * 2, maximumRetryDelay)
 
+        // Backoff avoids a tight restart loop when ping fails repeatedly.
         let timer = Timer(
             timeInterval: delay,
             target: self,
@@ -342,6 +355,7 @@ private final class PingMonitor: NSObject {
             userInfo: nil,
             repeats: false
         )
+        // Let macOS group this retry wakeup with nearby system work.
         timer.tolerance = min(delay * 0.2, 30)
         RunLoop.main.add(timer, forMode: .common)
         retryTimer = timer
@@ -357,6 +371,7 @@ private final class PingMonitor: NSObject {
     }
 
     nonisolated private static func event(from line: String) -> PingLineEvent? {
+        // Most ping output is not actionable; only latency, timeout, and fatal lines matter.
         guard !line.isEmpty else {
             return nil
         }
@@ -430,6 +445,7 @@ private final class PingBarController: NSObject {
             return
         }
 
+        // Use native tinting so the text follows light/dark menu bar appearances.
         button.title = "Ping ..."
         button.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
         button.image = nil
@@ -438,6 +454,7 @@ private final class PingBarController: NSObject {
     }
 
     private func configureMenu() {
+        // Disable AppKit auto-enabling because all menu state is controlled explicitly.
         menu.autoenablesItems = false
 
         let targetItem = NSMenuItem(
@@ -473,6 +490,7 @@ private final class PingBarController: NSObject {
     }
 
     private func applyStatusButton(_ presentation: StatusPresentation) {
+        // Avoid redundant AppKit writes, which can cause visible menu bar churn.
         guard presentation != lastPresentation else {
             return
         }
@@ -548,6 +566,7 @@ private final class PingBarController: NSObject {
 
     private func buildIntervalMenu() -> NSMenu {
         let menu = NSMenu()
+        // Keep references to update checkmarks when the selected interval changes.
         intervalItems = intervalOptions.map { interval in
             let item = NSMenuItem(
                 title: intervalTitle(interval),
@@ -574,6 +593,7 @@ private final class PingBarController: NSObject {
 
     private static func savedInterval(from defaults: UserDefaults) -> TimeInterval {
         let value = defaults.double(forKey: intervalDefaultsKey)
+        // Ignore stale defaults if the supported interval list changes later.
         guard intervalOptions.contains(value) else {
             return defaultInterval
         }

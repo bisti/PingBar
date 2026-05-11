@@ -1,6 +1,7 @@
 import Foundation
 
 public enum PingParser {
+    // These markers are matched on UTF-8 bytes to keep per-line parsing allocation-light.
     private static let timeEquals = Array("time=".utf8)
     private static let timeLessThan = Array("time<".utf8)
     private static let roundTrip = Array("round-trip".utf8)
@@ -15,10 +16,12 @@ public enum PingParser {
 
     public static func sanitizedHost(from input: String) -> String? {
         let host = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Reject option-like values so user input cannot inject extra ping flags.
         guard !host.isEmpty, host.count <= 253, !host.hasPrefix("-") else {
             return nil
         }
 
+        // Keep accepted targets to simple IPv4/domain characters for the shell-free Process call.
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-")
         guard host.rangeOfCharacter(from: allowed.inverted) == nil else {
             return nil
@@ -29,6 +32,7 @@ public enum PingParser {
 
     private static func packetLatencyMilliseconds(from output: String) -> Double? {
         let bytes = output.utf8
+        // macOS ping can report both "time=12.3 ms" and "time<1 ms".
         guard let marker = firstRange(of: timeEquals, in: bytes)
             ?? firstRange(of: timeLessThan, in: bytes) else {
             return nil
@@ -38,6 +42,7 @@ public enum PingParser {
     }
 
     private static func roundTripAverageMilliseconds(from output: String) -> Double? {
+        // Kept for summary output in tests and for compatibility with completed ping output.
         let bytes = output.utf8
         guard firstRange(of: roundTrip, in: bytes) != nil,
               let equals = firstIndex(of: asciiEquals, in: bytes),
@@ -50,6 +55,7 @@ public enum PingParser {
     }
 
     private static func number(after index: String.UTF8View.Index, in bytes: String.UTF8View) -> Double? {
+        // Parse the ASCII decimal directly instead of building a temporary substring.
         var start = index
 
         while start < bytes.endIndex, isASCIISpace(bytes[start]) {
