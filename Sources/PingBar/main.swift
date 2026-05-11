@@ -20,58 +20,6 @@ private struct PingResult: Sendable {
     let status: PingStatus
 }
 
-private struct PingCommand: Sendable {
-    let host: String
-    let timeoutMilliseconds: Int
-
-    init(host: String, timeoutMilliseconds: Int = 1_000) {
-        self.host = host
-        self.timeoutMilliseconds = timeoutMilliseconds
-    }
-
-    func run() -> PingStatus {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/sbin/ping")
-        process.arguments = [
-            "-n",
-            "-c", "1",
-            "-W", String(timeoutMilliseconds),
-            host
-        ]
-
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return .failure(message: error.localizedDescription)
-        }
-
-        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let errorOutput = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let combinedOutput = [output, errorOutput].joined(separator: "\n")
-
-        if let latency = PingParser.latencyMilliseconds(from: combinedOutput) {
-            return .success(milliseconds: latency)
-        }
-
-        if combinedOutput.contains("100.0% packet loss")
-            || combinedOutput.localizedCaseInsensitiveContains("request timeout") {
-            return .timeout
-        }
-
-        let message = combinedOutput
-            .split(separator: "\n")
-            .first
-            .map(String.init) ?? "ping failed"
-        return .failure(message: message)
-    }
-}
-
 private struct StatusPresentation {
     let buttonTitle: String
     let toolTip: String
@@ -191,9 +139,10 @@ private final class PingMonitor: NSObject {
 
     private(set) var host: String
     private(set) var interval: TimeInterval
-    private var timer: Timer?
-    private var isRunning = false
-    private var needsRefresh = false
+    private var process: Process?
+    private var outputPipe: Pipe?
+    private var readerTask: Task<Void, Never>?
+    private var generation = 0
     private var hasCompletedMeasurement = false
 
     init(host: String, interval: TimeInterval = defaultInterval) {
@@ -202,17 +151,16 @@ private final class PingMonitor: NSObject {
     }
 
     func start() {
-        scheduleTimer()
-        refresh()
+        restartPing(resetDisplay: true)
     }
 
     func updateHost(_ host: String) {
-        if self.host != host {
-            hasCompletedMeasurement = false
+        guard self.host != host else {
+            return
         }
 
         self.host = host
-        refresh()
+        restartPing(resetDisplay: true)
     }
 
     func updateInterval(_ interval: TimeInterval) {
@@ -221,64 +169,141 @@ private final class PingMonitor: NSObject {
         }
 
         self.interval = interval
-        scheduleTimer()
-        refresh()
+        restartPing(resetDisplay: false)
     }
 
-    private func scheduleTimer() {
-        timer?.invalidate()
-        let timer = Timer(
-            timeInterval: interval,
-            target: self,
-            selector: #selector(timerFired),
-            userInfo: nil,
-            repeats: true
-        )
-        timer.tolerance = min(interval * 0.2, 5)
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+    private func restartPing(resetDisplay: Bool) {
+        generation += 1
+        stopPing()
+
+        if resetDisplay {
+            hasCompletedMeasurement = false
+        }
+
+        if !hasCompletedMeasurement {
+            onUpdate?(PingResult(host: host, status: .measuring))
+        }
+
+        startPing(generation: generation)
     }
 
-    func refresh() {
-        guard !isRunning else {
-            needsRefresh = true
+    private func startPing(generation: Int) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/sbin/ping")
+        process.arguments = [
+            "-n",
+            "-i", intervalArgument(interval),
+            "-W", "1000",
+            host
+        ]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
+
+        self.process = process
+        self.outputPipe = outputPipe
+
+        do {
+            try process.run()
+        } catch {
+            self.process = nil
+            self.outputPipe = nil
+            hasCompletedMeasurement = true
+            onUpdate?(PingResult(host: host, status: .failure(message: error.localizedDescription)))
             return
         }
 
-        isRunning = true
-        let measuredHost = host
+        let output = outputPipe.fileHandleForReading
+        readerTask = Task { [weak self, generation, output] in
+            do {
+                for try await line in output.bytes.lines {
+                    guard !Task.isCancelled else {
+                        return
+                    }
 
-        if !hasCompletedMeasurement {
-            onUpdate?(PingResult(host: measuredHost, status: .measuring))
-        }
+                    self?.handlePingLine(line, generation: generation)
+                }
 
-        Task { [weak self, measuredHost] in
-            let status = await Task.detached(priority: .utility) {
-                PingCommand(host: measuredHost).run()
-            }.value
-
-            self?.finish(measuredHost: measuredHost, status: status)
+                self?.handlePingEnded(generation: generation)
+            } catch {
+                self?.handlePingEnded(generation: generation)
+            }
         }
     }
 
-    @objc private func timerFired(_ timer: Timer) {
-        refresh()
+    private func stopPing() {
+        readerTask?.cancel()
+        readerTask = nil
+
+        if process?.isRunning == true {
+            process?.terminate()
+        }
+
+        process = nil
+        outputPipe = nil
     }
 
-    private func finish(measuredHost: String, status: PingStatus) {
-        isRunning = false
+    private func handlePingLine(_ line: String, generation: Int) {
+        guard generation == self.generation else {
+            return
+        }
 
-        if host == measuredHost {
+        let line = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.isEmpty else {
+            return
+        }
+
+        if let latency = PingParser.latencyMilliseconds(from: line) {
             hasCompletedMeasurement = true
-            onUpdate?(PingResult(host: measuredHost, status: status))
-        } else {
-            needsRefresh = true
+            onUpdate?(PingResult(host: host, status: .success(milliseconds: latency)))
+            return
         }
 
-        if needsRefresh {
-            needsRefresh = false
-            refresh()
+        if line.localizedCaseInsensitiveContains("request timeout") {
+            hasCompletedMeasurement = true
+            onUpdate?(PingResult(host: host, status: .timeout))
+            return
         }
+
+        if isFatalPingLine(line) {
+            hasCompletedMeasurement = true
+            onUpdate?(PingResult(host: host, status: .failure(message: failureMessage(from: line))))
+            generationDidFinish()
+        }
+    }
+
+    private func handlePingEnded(generation: Int) {
+        guard generation == self.generation, !hasCompletedMeasurement else {
+            return
+        }
+
+        hasCompletedMeasurement = true
+        onUpdate?(PingResult(host: host, status: .failure(message: "ping stopped")))
+    }
+
+    private func generationDidFinish() {
+        generation += 1
+        stopPing()
+    }
+
+    private func intervalArgument(_ interval: TimeInterval) -> String {
+        "\(Int(interval))"
+    }
+
+    private func isFatalPingLine(_ line: String) -> Bool {
+        let lowercased = line.lowercased()
+        return lowercased.hasPrefix("ping:")
+            || lowercased.contains("sendto:")
+            || lowercased.contains("recvmsg:")
+    }
+
+    private func failureMessage(from line: String) -> String {
+        if let range = line.range(of: "ping: ", options: .caseInsensitive) {
+            return String(line[range.upperBound...])
+        }
+
+        return line
     }
 }
 
