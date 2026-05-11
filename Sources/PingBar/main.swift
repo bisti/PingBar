@@ -7,6 +7,8 @@ private let defaultInterval: TimeInterval = 5
 private let hostDefaultsKey = "PingBarHost"
 private let intervalDefaultsKey = "PingBarInterval"
 private let intervalOptions: [TimeInterval] = [1, 2, 5, 10, 30, 60]
+private let initialRetryDelay: TimeInterval = 5
+private let maximumRetryDelay: TimeInterval = 300
 
 private enum PingStatus: Sendable {
     case measuring
@@ -142,6 +144,8 @@ private final class PingMonitor: NSObject {
     private var process: Process?
     private var outputPipe: Pipe?
     private var readerTask: Task<Void, Never>?
+    private var retryTimer: Timer?
+    private var retryDelay = initialRetryDelay
     private var generation = 0
     private var hasCompletedMeasurement = false
 
@@ -151,7 +155,7 @@ private final class PingMonitor: NSObject {
     }
 
     func start() {
-        restartPing(resetDisplay: true)
+        restartPing(resetDisplay: true, resetRetry: true)
     }
 
     func updateHost(_ host: String) {
@@ -160,7 +164,7 @@ private final class PingMonitor: NSObject {
         }
 
         self.host = host
-        restartPing(resetDisplay: true)
+        restartPing(resetDisplay: true, resetRetry: true)
     }
 
     func updateInterval(_ interval: TimeInterval) {
@@ -169,12 +173,17 @@ private final class PingMonitor: NSObject {
         }
 
         self.interval = interval
-        restartPing(resetDisplay: false)
+        restartPing(resetDisplay: false, resetRetry: true)
     }
 
-    private func restartPing(resetDisplay: Bool) {
+    private func restartPing(resetDisplay: Bool, resetRetry: Bool) {
         generation += 1
+        stopRetryTimer()
         stopPing()
+
+        if resetRetry {
+            retryDelay = initialRetryDelay
+        }
 
         if resetDisplay {
             hasCompletedMeasurement = false
@@ -211,6 +220,7 @@ private final class PingMonitor: NSObject {
             self.outputPipe = nil
             hasCompletedMeasurement = true
             onUpdate?(PingResult(host: host, status: .failure(message: error.localizedDescription)))
+            scheduleRetry()
             return
         }
 
@@ -244,6 +254,11 @@ private final class PingMonitor: NSObject {
         outputPipe = nil
     }
 
+    private func stopRetryTimer() {
+        retryTimer?.invalidate()
+        retryTimer = nil
+    }
+
     private func handlePingLine(_ line: String, generation: Int) {
         guard generation == self.generation else {
             return
@@ -255,6 +270,7 @@ private final class PingMonitor: NSObject {
         }
 
         if let latency = PingParser.latencyMilliseconds(from: line) {
+            retryDelay = initialRetryDelay
             hasCompletedMeasurement = true
             onUpdate?(PingResult(host: host, status: .success(milliseconds: latency)))
             return
@@ -269,22 +285,42 @@ private final class PingMonitor: NSObject {
         if isFatalPingLine(line) {
             hasCompletedMeasurement = true
             onUpdate?(PingResult(host: host, status: .failure(message: failureMessage(from: line))))
-            generationDidFinish()
+            scheduleRetry()
         }
     }
 
     private func handlePingEnded(generation: Int) {
-        guard generation == self.generation, !hasCompletedMeasurement else {
+        guard generation == self.generation else {
             return
         }
 
         hasCompletedMeasurement = true
         onUpdate?(PingResult(host: host, status: .failure(message: "ping stopped")))
+        scheduleRetry()
     }
 
-    private func generationDidFinish() {
+    private func scheduleRetry() {
         generation += 1
         stopPing()
+
+        let delay = retryDelay
+        retryDelay = min(retryDelay * 2, maximumRetryDelay)
+
+        let timer = Timer(
+            timeInterval: delay,
+            target: self,
+            selector: #selector(retryTimerFired),
+            userInfo: nil,
+            repeats: false
+        )
+        timer.tolerance = min(delay * 0.2, 30)
+        RunLoop.main.add(timer, forMode: .common)
+        retryTimer = timer
+    }
+
+    @objc private func retryTimerFired(_ timer: Timer) {
+        retryTimer = nil
+        restartPing(resetDisplay: false, resetRetry: false)
     }
 
     private func intervalArgument(_ interval: TimeInterval) -> String {

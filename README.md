@@ -5,6 +5,7 @@ Petite app macOS de barre de menu qui affiche le ping actuel vers une cible.
 Par defaut, la cible est `1.1.1.1`. Depuis le menu, vous pouvez changer la cible, configurer l'intervalle de ping, ou quitter l'app.
 
 L'app garde un process `ping` continu au lieu de relancer `/sbin/ping` a chaque mesure, ce qui limite les creations de process et l'impact CPU.
+Si `ping` rencontre une erreur fatale, PingBar le relance automatiquement avec un delai progressif pour eviter une boucle CPU.
 
 ## Developpement
 
